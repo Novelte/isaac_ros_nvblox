@@ -50,14 +50,28 @@ NvbloxNode::NvbloxNode(const rclcpp::NodeOptions & options)
   use_color_ = declare_parameter<bool>("use_color", use_color_);
   use_depth_ = declare_parameter<bool>("use_depth", use_depth_);
   use_lidar_ = declare_parameter<bool>("use_lidar", use_lidar_);
+  use_radar_ = declare_parameter<bool>("use_radar", use_radar_);
   slice_height_ = declare_parameter<float>("slice_height", slice_height_);
   min_height_ = declare_parameter<float>("min_height", min_height_);
   max_height_ = declare_parameter<float>("max_height", max_height_);
+
+  // Lidar Parameters
   lidar_width_ = declare_parameter<int>("lidar_width", lidar_width_);
   lidar_height_ = declare_parameter<int>("lidar_height", lidar_height_);
   lidar_vertical_fov_rad_ = declare_parameter<float>(
     "lidar_vertical_fov_rad",
     lidar_vertical_fov_rad_);
+
+  // Radar Parameters
+  radar_width_ = declare_parameter<int>("radar_width", radar_width_);
+  radar_height_ = declare_parameter<int>("radar_height", radar_height_);
+  radar_horizontal_fov_rad_ = declare_parameter<float>(
+    "radar_horizontal_fov_rad",
+    radar_horizontal_fov_rad_);
+  radar_vertical_fov_rad_ = declare_parameter<float>(
+    "radar_vertical_fov_rad",
+    radar_vertical_fov_rad_);
+
   slice_visualization_attachment_frame_id_ =
     declare_parameter<std::string>(
     "slice_visualization_attachment_frame_id",
@@ -103,10 +117,10 @@ NvbloxNode::NvbloxNode(const rclcpp::NodeOptions & options)
 
   constexpr int kQueueSize = 10;
 
-  if (!use_depth_ && !use_lidar_) {
+  if (!use_depth_ && !use_lidar_ && !use_radar_) {
     RCLCPP_WARN(
       get_logger(),
-      "Nvblox is running without depth or lidar input, the cost maps and"
+      "Nvblox is running without depth or lidar or radar input, the cost maps and"
       " reconstructions will not update");
   }
 
@@ -148,6 +162,15 @@ NvbloxNode::NvbloxNode(const rclcpp::NodeOptions & options)
         std::placeholders::_1));
   }
 
+  if (use_radar_) {
+    // Subscribe to pointclouds.
+    radar_pointcloud_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
+      "radar", kQueueSize,
+      std::bind(
+        &NvbloxNode::radarPointcloudCallback, this,
+        std::placeholders::_1));
+  }
+
   // Subscribe to transforms.
   transform_sub_ = create_subscription<geometry_msgs::msg::TransformStamped>(
     "transform", kQueueSize,
@@ -186,6 +209,13 @@ NvbloxNode::NvbloxNode(const rclcpp::NodeOptions & options)
       std::bind(&NvbloxNode::processPointcloudQueue, this),
       group_processing_);
   }
+  if (use_radar_) {
+    radar_pointcloud_processing_timer_ = create_wall_timer(
+      std::chrono::duration<double>(1.0 / max_poll_rate_hz_),
+      std::bind(&NvbloxNode::processRadarPointcloudQueue, this),
+      group_processing_);
+  }
+
   esdf_processing_timer_ = create_wall_timer(
     std::chrono::duration<double>(1.0 / effective_esdf_rate_hz),
     std::bind(&NvbloxNode::processEsdf, this), group_processing_);
@@ -294,6 +324,8 @@ NvbloxNode::NvbloxNode(const rclcpp::NodeOptions & options)
   last_color_update_time_ = rclcpp::Time(0ul, get_clock()->get_clock_type());
   last_pointcloud_update_time_ =
     rclcpp::Time(0ul, get_clock()->get_clock_type());
+  last_radar_pointcloud_update_time_ =
+    rclcpp::Time(0ul, get_clock()->get_clock_type());
   last_esdf_update_time_ = rclcpp::Time(0ul, get_clock()->get_clock_type());
   last_mesh_update_time_ = rclcpp::Time(0ul, get_clock()->get_clock_type());
 }
@@ -372,6 +404,26 @@ void NvbloxNode::pointcloudCallback(
   {
     const std::lock_guard<std::mutex> lock(pointcloud_queue_mutex_);
     pointcloud_queue_.emplace_back(pointcloud);
+  }
+}
+
+void NvbloxNode::radarPointcloudCallback(
+  const sensor_msgs::msg::PointCloud2::ConstSharedPtr pointcloud)
+{
+  constexpr int kPublishPeriodMs = 10000;
+  auto & clk = *get_clock();
+
+  RCLCPP_INFO_STREAM_THROTTLE(
+    get_logger(), clk, kPublishPeriodMs,
+    "Timing statistics: \n" <<
+      nvblox::timing::Timing::Print());
+
+  timing::Timer ros_total_timer("ros/total");
+
+  // Push it into the queue. It's converted later on.
+  {
+    const std::lock_guard<std::mutex> lock(radar_pointcloud_queue_mutex_);
+    radar_pointcloud_queue_.emplace_back(pointcloud);
   }
 }
 
@@ -526,6 +578,84 @@ void NvbloxNode::processPointcloudQueue()
     last_pointcloud_update_time_ = clock_now;
 
     processLidarPointcloud(pointcloud);
+  }
+
+  // Clear map outside radius, if requested
+  if (map_clearing_radius_m_ > 0.0f) {
+    const auto pointcloud_ptr = pointclouds_to_process.back();
+    clearMapOutsideOfRadius(pointcloud_ptr->header.frame_id, pointcloud_ptr->header.stamp);
+  }
+}
+
+void NvbloxNode::processRadarPointcloudQueue()
+{
+  timing::Timer ros_total_timer("ros/total");
+
+  std::unique_lock<std::mutex> lock(radar_pointcloud_queue_mutex_);
+
+  if (radar_pointcloud_queue_.empty()) {
+    lock.unlock();
+    return;
+  }
+
+  std::vector<sensor_msgs::msg::PointCloud2::ConstSharedPtr>
+  pointclouds_to_process;
+
+  auto it_first_valid = radar_pointcloud_queue_.end();
+  auto it_last_valid = radar_pointcloud_queue_.begin();
+
+  for (auto it = radar_pointcloud_queue_.begin(); it != radar_pointcloud_queue_.end();
+    it++)
+  {
+    sensor_msgs::msg::PointCloud2::ConstSharedPtr pointcloud_ptr = *it;
+
+    rclcpp::Time timestamp = pointcloud_ptr->header.stamp;
+
+    // Process this pointcloud in the queue
+    if (canTransform(pointcloud_ptr->header)) {
+      pointclouds_to_process.push_back(pointcloud_ptr);
+    } else {
+      continue;
+    }
+
+    // If we processed this frame, keep track of that fact so we can delete it
+    // at the end.
+    if (it_first_valid == radar_pointcloud_queue_.end()) {
+      it_first_valid = it;
+    }
+    if (it_last_valid <= it) {
+      it_last_valid = it;
+    }
+  }
+
+  // Now we have 2 iterators pointing to what we want to delete.
+  if (it_first_valid != radar_pointcloud_queue_.end()) {
+    // Actually erase from the beginning of the queue.
+    radar_pointcloud_queue_.erase(radar_pointcloud_queue_.begin(), ++it_last_valid);
+  }
+  lock.unlock();
+
+  // Now we actually process the depth images.
+  if (pointclouds_to_process.empty()) {
+    return;
+  }
+
+  rclcpp::Time last_timestamp;
+  for (auto pointcloud : pointclouds_to_process) {
+    // Cache clock_now.
+    last_timestamp = pointcloud->header.stamp;
+    rclcpp::Time clock_now = last_timestamp;
+
+    if (max_pointcloud_update_hz_ > 0.0f &&
+      (clock_now - last_radar_pointcloud_update_time_).seconds() <
+      1.0f / max_pointcloud_update_hz_)
+    {
+      // Skip integrating this.
+      continue;
+    }
+    last_radar_pointcloud_update_time_ = clock_now;
+
+    processRadarPointcloud(pointcloud);
   }
 
   // Clear map outside radius, if requested
@@ -763,6 +893,56 @@ bool NvbloxNode::processLidarPointcloud(
 
   mapper_->integrateLidarDepth(pointcloud_image_, T_S_C, lidar);
   lidar_integration_timer.Stop();
+
+  return true;
+}
+
+bool NvbloxNode::processRadarPointcloud(
+  sensor_msgs::msg::PointCloud2::ConstSharedPtr & pointcloud_ptr)
+{
+  timing::Timer ros_lidar_timer("ros/radar");
+  timing::Timer transform_timer("ros/radar/transform");
+
+  // Get the TF for this image.
+  const std::string target_frame = pointcloud_ptr->header.frame_id;
+  Transform T_S_C;
+
+  if (!transformer_.lookupTransformToGlobalFrame(
+      target_frame, pointcloud_ptr->header.stamp, &T_S_C))
+  {
+    return false;
+  }
+
+  transform_timer.Stop();
+
+  // Radar intrinsics model
+  Radar radar(radar_width_, radar_height_, radar_horizontal_fov_rad_, radar_vertical_fov_rad_);
+
+  // We check that the pointcloud is consistent with this RADAR model
+  // NOTE(alexmillane): If the check fails we return true which indicates that
+  // this pointcloud can be removed from the queue even though it wasn't
+  // integrated (because the intrisics model is messed up).
+  // NOTE(alexmillane): Note that internally we cache checks, so each rADAR
+  // intrisics model is only tested against a single pointcloud. This is because
+  // the check is expensive to perform.
+  if (!converter_.checkRadarPointcloud(pointcloud_ptr, radar)) {
+    RCLCPP_ERROR_ONCE(
+      get_logger(),
+      "Radar intrinsics are inconsistent with the received "
+      "pointcloud. Failing integration.");
+    return true;
+  }
+
+  timing::Timer radar_conversion_timer("ros/radar/conversion");
+  converter_.depthImageFromPointcloudGPU(
+    pointcloud_ptr, radar,
+    &radar_pointcloud_image_);
+  radar_conversion_timer.Stop();
+
+  timing::Timer radar_integration_timer("ros/radar/integration");
+
+  mapper_->integrateRadarDepth(radar_pointcloud_image_, T_S_C, radar);
+  radar_integration_timer.Stop();
 
   return true;
 }

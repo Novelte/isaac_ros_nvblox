@@ -281,7 +281,34 @@ bool RosConverter::checkLidarPointcloud(
   return true;
 }
 
-void RosConverter::writeLidarPointcloudToFile(
+bool RosConverter::checkRadarPointcloud(
+  const sensor_msgs::msg::PointCloud2::ConstSharedPtr & pointcloud,
+  const Radar & radar)
+{
+  // Check the cache
+  if (checked_radar_models_.find(radar) != checked_radar_models_.end()) {
+    return true;
+  }
+
+  // Go through the pointcloud and check that each point projects to a pixel
+  // center.
+  sensor_msgs::PointCloud2ConstIterator<float> iter_xyz(*pointcloud, "x");
+  for (; iter_xyz != iter_xyz.end(); ++iter_xyz) {
+    Vector3f point(iter_xyz[0], iter_xyz[1], iter_xyz[2]);
+    if (point.hasNaN()) {
+      continue;
+    }
+    Vector2f u_C;
+    if (!radar.project(point, &u_C)) {
+      // Point fell outside the FoV specified in the intrinsics.
+      return false;
+    }
+  }
+  checked_radar_models_.insert(radar);
+  return true;
+}
+
+void RosConverter::writePointcloudToFile(
   const std::string filepath_prefix,
   const sensor_msgs::msg::PointCloud2::ConstSharedPtr & pointcloud)
 {
