@@ -181,7 +181,7 @@ def generate_launch_description():
 
     # RVIZ
     rviz_config_path = os.path.join(get_package_share_directory(
-        'nvblox_examples_bringup'), 'config', 'nvblox_vslam_realsense.rviz')
+        'nvblox_examples_bringup'), 'config', 'nvblox_vslam_realsense_mmwave.rviz')
 
     rviz = Node(
         package='rviz2',
