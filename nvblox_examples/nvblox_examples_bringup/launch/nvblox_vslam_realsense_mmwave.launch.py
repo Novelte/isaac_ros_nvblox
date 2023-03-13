@@ -127,7 +127,7 @@ def generate_launch_description():
     mmwave_config = DeclareLaunchArgument(
         'mmwave_config', default_value=os.path.join(
             get_package_share_directory(
-                'nvblox_examples_bringup'), 'config', 'Mobile_tracker_6843_ISK.cfg'
+                'nvblox_examples_bringup'), 'config', 'Mobile_Tracker_6843_ISK.cfg'
         )
     )
 
