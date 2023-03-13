@@ -32,7 +32,7 @@ def generate_launch_description():
     # RealSense
     realsense_config_file_path = os.path.join(
         get_package_share_directory('nvblox_examples_bringup'),
-        'config', 'rs_d435i-vins.yaml'
+        'config', 'realsense_imu.yaml'
     )  
 
     realsense_node = ComposableNode(
@@ -104,30 +104,48 @@ def generate_launch_description():
                             }]
             )
 
-    base_link_tf_node = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        arguments=[
-            '0', '0', '0', '0', '0', '0', '1',
-            'base_link', 'camera_link']
-    )
-
-    world_tf_node = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        name='static_transform_publisher',
-        output='screen',
-        arguments = ['0', '0.2', '0.35', '0.0', '0.0', '0.0', '1.0', 'map', 'world'],
-    )
-
-    cam_rect_tf_node = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        name='static_transform_publisher',
-        output='screen',
-        arguments = ['0', '0', '0', '0.5', '-0.5', '0.5', '0.5', 'camera_rect', 'camera_link'],
-    )
-
+    tf_nodes = [Node(
+            package='tf2_ros',
+            executable='static_transform_publisher',
+            name='static_transform_publisher',
+            output='screen',
+            arguments = ['0', '0', '0', '0.5', '-0.5', '0.5', '0.5', 'camera', 'camera_link'],
+        ),
+        Node(
+            package='tf2_ros',
+            executable='static_transform_publisher',
+            name='static_transform_publisher',
+            output='screen',
+            arguments = ['0', '0.2', '0.35', '0.0', '0.0', '0.0', '1.0', 'map', 'world'],
+        ),             
+        Node(
+            package='tf2_ros',
+            executable='static_transform_publisher',
+            name='static_transform_publisher',
+            output='screen',
+            arguments = ['0', '0', '0', '0.5', '-0.5', '0.5', '0.5', 'front_camera_rect', 'camera_link'],
+        ),
+        Node(
+            package='tf2_ros',
+            executable='static_transform_publisher',
+            name='static_transform_publisher',
+            output='screen',
+            arguments = ['0', '0.2', '0.35', '0.0', '0.0', '0.0', '1.0', 'map', 'world'],
+        ),
+        Node(
+            package='tf2_ros',
+            executable='static_transform_publisher',
+            name='static_transform_publisher',
+            output='screen',
+            arguments = ['0', '0', '0', '0.0', '0.0', '0.0', '1.0', 'odom', 'base_link'],
+        ),   
+        Node(
+            package='tf2_ros',
+            executable='static_transform_publisher',
+            name='static_transform_publisher',
+            output='screen',
+            arguments = ['0', '0', '0', '0.0', '0.0', '0.0', '1.0', 'base_link', 'front_camera_rect'],
+        )]  
 
     # Nvblox
     nvblox_config = DeclareLaunchArgument(
@@ -179,10 +197,7 @@ def generate_launch_description():
         realsense_container,
         # vslam_container,
         vins_node,
-        nvblox_container,
-        base_link_tf_node,
-        world_tf_node,
-        cam_rect_tf_node,
         loop_node,
-        # rviz
-    ])
+        nvblox_container,
+        rviz
+    ] + tf_nodes)
