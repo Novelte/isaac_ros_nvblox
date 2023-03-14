@@ -21,8 +21,8 @@ nvblox_node:
     global_frame: odom
     voxel_size: 0.05
     slice_height: 0.0
-    min_height: -0.1
-    max_height: 0.1
+    min_height: -2.0
+    max_height: 2.0
     esdf: true
     esdf_2d: true
     mesh: true
@@ -35,7 +35,7 @@ nvblox_node:
     esdf_integrator_max_site_distance_vox: 5.0
     max_tsdf_update_hz: 30.0
     max_color_update_hz: 5.0
-    max_mesh_update_hz: 1.0
+    max_mesh_update_hz: 2.0
     max_esdf_update_hz: 10.0
     output_dir: /workspaces/isaac_ros-dev/output
     depth_qos: "SENSOR_DATA"
@@ -44,7 +44,5 @@ nvblox_node:
     use_depth: false
     use_lidar: false
     use_color: false
-    radar_witdh: 640
-    radar_height: 640
-    radar_horizontal_fov_rad: 1.0472
-    radar_vertical_fov_rad: 1.0472
+    radar_horizontal_fov_rad: 2.0944
+    radar_vertical_fov_rad: 0.6981
