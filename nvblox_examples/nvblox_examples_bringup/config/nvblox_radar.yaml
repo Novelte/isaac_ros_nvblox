@@ -41,3 +41,10 @@ nvblox_node:
     depth_qos: "SENSOR_DATA"
     color_qos: "SENSOR_DATA"
     use_radar: true
+    use_depth: false
+    use_lidar: false
+    use_color: false
+    radar_witdh: 640
+    radar_height: 640
+    radar_horizontal_fov_rad: 1.0472
+    radar_vertical_fov_rad: 1.0472
