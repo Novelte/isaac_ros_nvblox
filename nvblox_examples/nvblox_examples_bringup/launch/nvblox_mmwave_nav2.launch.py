@@ -19,7 +19,6 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 
-from launch.conditions import IfCondition
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
@@ -36,7 +35,7 @@ def generate_launch_description():
     mmwave_config = DeclareLaunchArgument(
         'mmwave_config', default_value=os.path.join(
             get_package_share_directory(
-                'nvblox_examples_bringup'), 'config', '6843AOP_3d.cfg'
+                'nvblox_examples_bringup'), 'config', 'Mobile_Tracker_6843_ISK.cfg'
         )
     )
 
