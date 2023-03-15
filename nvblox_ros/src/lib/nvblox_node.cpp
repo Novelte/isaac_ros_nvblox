@@ -48,6 +48,9 @@ NvbloxNode::NvbloxNode(const rclcpp::NodeOptions & options)
   esdf_2d_ = declare_parameter<bool>("esdf_2d", esdf_2d_);
   distance_slice_ = declare_parameter<bool>("distance_slice", distance_slice_);
   use_color_ = declare_parameter<bool>("use_color", use_color_);
+  use_semantic_ = declare_parameter<bool>("use_semantic", use_semantic_);
+  display_semantic_ = declare_parameter<bool>("display_semantic", display_semantic_);
+  display_last_ = display_semantic_;
   use_depth_ = declare_parameter<bool>("use_depth", use_depth_);
   use_lidar_ = declare_parameter<bool>("use_lidar", use_lidar_);
   slice_height_ = declare_parameter<float>("slice_height", slice_height_);
@@ -84,6 +87,8 @@ NvbloxNode::NvbloxNode(const rclcpp::NodeOptions & options)
     declare_parameter<std::string>("depth_qos", kDefaultQoS);
   std::string color_qos =
     declare_parameter<std::string>("color_qos", kDefaultQoS);
+  std::string semantic_qos =
+    declare_parameter<std::string>("semantic_qos", kDefaultQoS);
 
   // Settings for map clearing
   map_clearing_radius_m_ =
@@ -138,6 +143,20 @@ NvbloxNode::NvbloxNode(const rclcpp::NodeOptions & options)
         this, std::placeholders::_1,
         std::placeholders::_2));
   }
+  if (use_semantic_) {
+    // Subscribe to synchronized color + cam_info topics
+    semantic_sub_.subscribe(this, "semantic/image", parseQoSString(semantic_qos));
+    semantic_camera_info_sub_.subscribe(this, "semantic/camera_info");
+
+    timesync_semantic_.reset(
+      new message_filters::Synchronizer<time_policy_t>(
+        time_policy_t(kQueueSize), semantic_sub_, semantic_camera_info_sub_));
+    timesync_semantic_->registerCallback(
+      std::bind(
+        &NvbloxNode::semanticImageCallback,
+        this, std::placeholders::_1,
+        std::placeholders::_2));
+  }  
 
   if (use_lidar_) {
     // Subscribe to pointclouds.
@@ -180,6 +199,11 @@ NvbloxNode::NvbloxNode(const rclcpp::NodeOptions & options)
       std::chrono::duration<double>(1.0 / max_poll_rate_hz_),
       std::bind(&NvbloxNode::processColorQueue, this), group_processing_);
   }
+  if (use_semantic_) {
+    semantic_processing_timer_ = create_wall_timer(
+      std::chrono::duration<double>(1.0 / max_poll_rate_hz_),
+      std::bind(&NvbloxNode::processSemanticQueue, this), group_processing_);
+  }  
   if (use_lidar_) {
     pointcloud_processing_timer_ = create_wall_timer(
       std::chrono::duration<double>(1.0 / max_poll_rate_hz_),
@@ -223,6 +247,13 @@ NvbloxNode::NvbloxNode(const rclcpp::NodeOptions & options)
     "~/load_map",
     std::bind(
       &NvbloxNode::loadMap, this, std::placeholders::_1,
+      std::placeholders::_2),
+    rmw_qos_profile_services_default, group_processing_);
+  // Services
+  swap_display_service = create_service<std_srvs::srv::SetBool>(
+    "~/swap_display",
+    std::bind(
+      &NvbloxNode::swapDisplay, this, std::placeholders::_1,
       std::placeholders::_2),
     rmw_qos_profile_services_default, group_processing_);
 
@@ -283,6 +314,7 @@ NvbloxNode::NvbloxNode(const rclcpp::NodeOptions & options)
   // Start the message statistics
   depth_frame_statistics_.Start();
   rgb_frame_statistics_.Start();
+  semantic_frame_statistics_.Start();
 
   RCLCPP_INFO_STREAM(
     get_logger(), "Started up nvblox node in frame " <<
@@ -292,6 +324,7 @@ NvbloxNode::NvbloxNode(const rclcpp::NodeOptions & options)
   // Set state.
   last_tsdf_update_time_ = rclcpp::Time(0ul, get_clock()->get_clock_type());
   last_color_update_time_ = rclcpp::Time(0ul, get_clock()->get_clock_type());
+  last_semantic_update_time_ = rclcpp::Time(0ul, get_clock()->get_clock_type());
   last_pointcloud_update_time_ =
     rclcpp::Time(0ul, get_clock()->get_clock_type());
   last_esdf_update_time_ = rclcpp::Time(0ul, get_clock()->get_clock_type());
@@ -352,6 +385,32 @@ void NvbloxNode::colorImageCallback(
   {
     const std::lock_guard<std::mutex> lock(color_queue_mutex_);
     color_image_queue_.emplace_back(color_image_ptr, camera_info_msg);
+  }
+}
+
+void NvbloxNode::semanticImageCallback(
+  const sensor_msgs::msg::Image::ConstSharedPtr & semantic_image_ptr,
+  const sensor_msgs::msg::CameraInfo::ConstSharedPtr & camera_info_msg)
+{
+  // Message statistics
+  semantic_frame_statistics_.OnMessageReceived(
+    *semantic_image_ptr,
+    get_clock()->now().nanoseconds());
+  constexpr int kPublishPeriodMs = 10000;
+  auto & clk = *get_clock();
+  RCLCPP_INFO_STREAM_THROTTLE(
+    get_logger(), clk, kPublishPeriodMs,
+    "RGB frame statistics: \n" <<
+      libstatistics_collector::moving_average_statistics::
+      StatisticsDataToString(
+      semantic_frame_statistics_.GetStatisticsResults()));
+
+  timing::Timer ros_total_timer("ros/total");
+
+  // Push it into the queue.
+  {
+    const std::lock_guard<std::mutex> lock(semantic_queue_mutex_);
+    semantic_image_queue_.emplace_back(semantic_image_ptr, camera_info_msg);
   }
 }
 
@@ -636,6 +695,80 @@ void NvbloxNode::processColorQueue()
   }
 }
 
+void NvbloxNode::processSemanticQueue()
+{
+  timing::Timer ros_total_timer("ros/total");
+
+  // Copy over all the pointers we actually want to process here.
+  std::vector<std::pair<sensor_msgs::msg::Image::ConstSharedPtr,
+    sensor_msgs::msg::CameraInfo::ConstSharedPtr>>
+  images_to_process;
+
+  std::unique_lock<std::mutex> lock(semantic_queue_mutex_);
+
+  if (semantic_image_queue_.empty()) {
+    lock.unlock();
+    return;
+  }
+
+  auto it_first_valid = semantic_image_queue_.end();
+  auto it_last_valid = semantic_image_queue_.begin();
+  for (auto it = semantic_image_queue_.begin(); it != semantic_image_queue_.end();
+    it++)
+  {
+    sensor_msgs::msg::Image::ConstSharedPtr semantic_img_ptr = it->first;
+    sensor_msgs::msg::CameraInfo::ConstSharedPtr camera_info_msg = it->second;
+
+    rclcpp::Time timestamp = semantic_img_ptr->header.stamp;
+
+    // Process this image in the queue
+    if (canTransform(semantic_img_ptr->header)) {
+      images_to_process.push_back(
+        std::make_pair(semantic_img_ptr, camera_info_msg));
+    } else {
+      continue;
+    }
+
+    // If we processed this frame, keep track of that fact so we can delete it
+    // at the end.
+    if (it_first_valid == semantic_image_queue_.end()) {
+      it_first_valid = it;
+    }
+    if (it_last_valid <= it) {
+      it_last_valid = it;
+    }
+  }
+
+  // Now we have 2 iterators pointing to what we want to delete.
+  if (it_first_valid != semantic_image_queue_.end()) {
+    // Actually erase from the beginning of the queue.
+    semantic_image_queue_.erase(semantic_image_queue_.begin(), ++it_last_valid);
+  }
+  lock.unlock();
+
+  // Now we actually process the color images.
+  if (images_to_process.empty()) {
+    return;
+  }
+
+  rclcpp::Time last_timestamp;
+  for (auto image_pair : images_to_process) {
+    // Cache clock_now.
+    rclcpp::Time clock_now = image_pair.first->header.stamp;
+
+    if (max_semantic_update_hz_ > 0.0f &&
+      (clock_now - last_semantic_update_time_).seconds() <
+      1.0f / max_semantic_update_hz_)
+    {
+      // Skip integrating this.
+      continue;
+    }
+    last_semantic_update_time_ = clock_now;
+
+    processSemanticImage(image_pair.first, image_pair.second);
+  }
+}
+
 bool NvbloxNode::canTransform(const std_msgs::msg::Header & header)
 {
   Transform T_S_C;
@@ -714,6 +847,44 @@ bool NvbloxNode::processColorImage(
   timing::Timer color_integrate_timer("ros/color/integrate");
   mapper_->integrateColor(color_image_, T_S_C, camera);
   color_integrate_timer.Stop();
+  return true;
+}
+
+bool NvbloxNode::processSemanticImage(
+  sensor_msgs::msg::Image::ConstSharedPtr & semantic_img_ptr,
+  sensor_msgs::msg::CameraInfo::ConstSharedPtr & camera_info_msg)
+{
+  timing::Timer ros_semantic_timer("ros/semantic");
+  timing::Timer transform_timer("ros/semantic/transform");
+
+  // Get the TF for this image.
+  const std::string target_frame = semantic_img_ptr->header.frame_id;
+  Transform T_S_C;
+
+  if (!transformer_.lookupTransformToGlobalFrame(
+      target_frame, semantic_img_ptr->header.stamp, &T_S_C))
+  {
+    return false;
+  }
+
+  transform_timer.Stop();
+
+  timing::Timer semantic_convert_timer("ros/semantic/conversion");
+
+  // Convert camera info message to camera object.
+  Camera camera = converter_.cameraFromMessage(*camera_info_msg);
+
+  // Convert the color image.
+  if (!converter_.colorImageFromImageMessage(semantic_img_ptr, &semantic_image_)) {
+    RCLCPP_ERROR(get_logger(), "Failed to transform semantic image.");
+    return false;
+  }
+  semantic_convert_timer.Stop();
+
+  // Integrate.
+  timing::Timer semantic_integrate_timer("ros/semantic/integrate");
+  mapper_->integrateSemantic(semantic_image_, T_S_C, camera);
+  semantic_integrate_timer.Stop();
   return true;
 }
 
@@ -836,7 +1007,7 @@ void NvbloxNode::updateMesh(const rclcpp::Time & timestamp)
   timing::Timer ros_mesh_timer("ros/mesh");
 
   timing::Timer mesh_integration_timer("ros/mesh/integrate_and_color");
-  const std::vector<Index3D> mesh_updated_list = mapper_->updateMesh();
+  const std::vector<Index3D> mesh_updated_list = mapper_->updateMesh(display_semantic_);
   mesh_integration_timer.Stop();
 
   // In the case that some mesh blocks have been re-added after deletion, remove them from the
@@ -857,7 +1028,7 @@ void NvbloxNode::updateMesh(const rclcpp::Time & timestamp)
   if (new_subscriber_count > 0) {
     nvblox_msgs::msg::Mesh mesh_msg;
     // In case we have new subscribers, publish the ENTIRE map once.
-    if (new_subscriber_count > mesh_subscriber_count_) {
+    if (new_subscriber_count > mesh_subscriber_count_ || display_last_ != display_semantic_) {
       RCLCPP_INFO(get_logger(), "Got a new subscriber, sending entire map.");
 
       converter_.meshMessageFromMeshBlocks(
@@ -865,6 +1036,7 @@ void NvbloxNode::updateMesh(const rclcpp::Time & timestamp)
         &mesh_msg);
       mesh_msg.clear = true;
       should_publish = true;
+      display_last_ = display_semantic_;
     } else {
       converter_.meshMessageFromMeshBlocks(
         mapper_->mesh_layer(),
@@ -999,6 +1171,23 @@ void NvbloxNode::loadMap(
       get_logger(),
       "Failed to load map file from " << filename);
   }
+}
+
+void NvbloxNode::swapDisplay(
+  const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+  std::shared_ptr<std_srvs::srv::SetBool::Response> response)
+{
+  if (request->data)//true display color voxel
+  {
+    display_semantic_ = true;
+    response->message = "Display Semantic Voxel";
+  }
+  else// false display semantic voxel
+  {
+    display_semantic_ = false;
+    response->message = "Display Color Voxel";
+  }
+  response->success = true;
 }
 
 }  // namespace nvblox
