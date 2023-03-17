@@ -215,21 +215,13 @@ void RosConverter::meshBlockMessageFromMeshBlock(
 
   mesh_block_msg->vertices.resize(num_vertices);
   mesh_block_msg->normals.resize(num_vertices);
-  mesh_block_msg->colors.resize(mesh_block.colors.size());
+  mesh_block_msg->colors.resize(semantic ? mesh_block.semantic_colors.size() : mesh_block.colors.size());
   mesh_block_msg->triangles.resize(mesh_block.triangles.size());
 
   std::vector<Vector3f> vertices = mesh_block.getVertexVectorOnCPU();
   std::vector<Vector3f> normals = mesh_block.getNormalVectorOnCPU();
-
-  std::vector<Color> colors;
-  if (semantic)
-  {
-    colors = mesh_block.getColorVectorOnCPU();
-  } else {
-    colors = mesh_block.getSemanticColorVectorOnCPU();
-  }
+  std::vector<Color> colors = semantic ? mesh_block.getSemanticColorVectorOnCPU() : mesh_block.getColorVectorOnCPU();
   
-
   // Copy over vertices and normals.
   for (size_t i = 0; i < num_vertices; i++) {
     mesh_block_msg->vertices[i] = point32MessageFromVector(vertices[i]);
