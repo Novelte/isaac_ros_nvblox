@@ -207,19 +207,19 @@ template void RosConverter::convertLayerInAABBToPCLCuda<EsdfVoxel>(
     sensor_msgs::msg::PointCloud2* pointcloud);
 
 void RosConverter::meshBlockMessageFromMeshBlock(
-    const MeshBlock& mesh_block, nvblox_msgs::msg::MeshBlock* mesh_block_msg) {
+    const MeshBlock& mesh_block, nvblox_msgs::msg::MeshBlock* mesh_block_msg, bool display_semantic) {
   CHECK_NOTNULL(mesh_block_msg);
 
   size_t num_vertices = mesh_block.vertices.size();
 
   mesh_block_msg->vertices.resize(num_vertices);
   mesh_block_msg->normals.resize(num_vertices);
-  mesh_block_msg->colors.resize(mesh_block.colors.size());
+  mesh_block_msg->colors.resize(display_semantic ? mesh_block.sid.size() : mesh_block.colors.size());
   mesh_block_msg->triangles.resize(mesh_block.triangles.size());
 
   std::vector<Vector3f> vertices = mesh_block.getVertexVectorOnCPU();
   std::vector<Vector3f> normals = mesh_block.getNormalVectorOnCPU();
-  std::vector<Color> colors = mesh_block.getColorVectorOnCPU();
+  std::vector<Color> colors = display_semantic ? mesh_block.getSemanticVectorOnCPU() : mesh_block.getColorVectorOnCPU();
 
   // Copy over vertices and normals.
   for (size_t i = 0; i < num_vertices; i++) {

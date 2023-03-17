@@ -1007,7 +1007,7 @@ void NvbloxNode::updateMesh(const rclcpp::Time & timestamp)
   timing::Timer ros_mesh_timer("ros/mesh");
 
   timing::Timer mesh_integration_timer("ros/mesh/integrate_and_color");
-  const std::vector<Index3D> mesh_updated_list = mapper_->updateMesh(display_semantic_);
+  const std::vector<Index3D> mesh_updated_list = mapper_->updateMesh();
   mesh_integration_timer.Stop();
 
   // In the case that some mesh blocks have been re-added after deletion, remove them from the
@@ -1033,14 +1033,14 @@ void NvbloxNode::updateMesh(const rclcpp::Time & timestamp)
 
       converter_.meshMessageFromMeshBlocks(
         mapper_->mesh_layer(), mapper_->mesh_layer().getAllBlockIndices(),
-        &mesh_msg);
+        &mesh_msg, std::vector<Index3D>(), display_semantic_);
       mesh_msg.clear = true;
       should_publish = true;
       display_last_ = display_semantic_;
     } else {
       converter_.meshMessageFromMeshBlocks(
         mapper_->mesh_layer(),
-        mesh_updated_list, &mesh_msg, mesh_blocks_to_delete);
+        mesh_updated_list, &mesh_msg, mesh_blocks_to_delete, display_semantic_);
     }
     mesh_msg.header.frame_id = global_frame_;
     mesh_msg.header.stamp = timestamp;

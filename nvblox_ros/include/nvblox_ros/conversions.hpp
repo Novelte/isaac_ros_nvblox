@@ -93,10 +93,11 @@ public:
     const BlockLayer<MeshBlock> & mesh_layer,
     const std::vector<Index3D> & block_indices,
     nvblox_msgs::msg::Mesh * mesh_msg,
-    const std::vector<Index3D> & deleted_indices = std::vector<Index3D>());
+    const std::vector<Index3D> & deleted_indices = std::vector<Index3D>(),
+    bool display_semantic = false);
 
   void meshBlockMessageFromMeshBlock(
-    const MeshBlock & mesh_block, nvblox_msgs::msg::MeshBlock * mesh_block_msg);
+    const MeshBlock & mesh_block, nvblox_msgs::msg::MeshBlock * mesh_block_msg, bool display_semantic = false);
 
   // Convert a mesh to a marker array.
   void markerMessageFromMeshLayer(

@@ -91,7 +91,8 @@ void RosConverter::meshMessageFromMeshBlocks(
   const BlockLayer<MeshBlock> & mesh_layer,
   const std::vector<Index3D> & block_indices,
   nvblox_msgs::msg::Mesh * mesh_msg,
-  const std::vector<Index3D> & block_indices_to_delete)
+  const std::vector<Index3D> & block_indices_to_delete,
+  bool display_semantic)
 {
   // Go through all the blocks, converting each individual one.
   mesh_msg->block_size = mesh_layer.block_size();
@@ -109,7 +110,7 @@ void RosConverter::meshMessageFromMeshBlocks(
     }
 
     // Convert the actual block.
-    meshBlockMessageFromMeshBlock(*mesh_block, &mesh_msg->blocks[i]);
+    meshBlockMessageFromMeshBlock(*mesh_block, &mesh_msg->blocks[i], display_semantic);
   }
 
   for (const Index3D & block_index : block_indices_to_delete) {
