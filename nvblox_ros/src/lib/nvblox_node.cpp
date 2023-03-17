@@ -1007,7 +1007,7 @@ void NvbloxNode::updateMesh(const rclcpp::Time & timestamp)
   timing::Timer ros_mesh_timer("ros/mesh");
 
   timing::Timer mesh_integration_timer("ros/mesh/integrate_and_color");
-  const std::vector<Index3D> mesh_updated_list = mapper_->updateMesh(display_semantic_);
+  const std::vector<Index3D> mesh_updated_list = mapper_->updateMesh();
   mesh_integration_timer.Stop();
 
   // In the case that some mesh blocks have been re-added after deletion, remove them from the
