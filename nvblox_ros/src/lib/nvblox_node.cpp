@@ -874,8 +874,8 @@ bool NvbloxNode::processSemanticImage(
   // Convert camera info message to camera object.
   Camera camera = converter_.cameraFromMessage(*camera_info_msg);
 
-  // Convert the color image.
-  if (!converter_.colorImageFromImageMessage(semantic_img_ptr, &semantic_image_)) {
+  // Convert the semantic image.
+  if (!converter_.semanticImageFromImageMessage(semantic_img_ptr, &semantic_image_)) {
     RCLCPP_ERROR(get_logger(), "Failed to transform semantic image.");
     return false;
   }
@@ -1033,14 +1033,14 @@ void NvbloxNode::updateMesh(const rclcpp::Time & timestamp)
 
       converter_.meshMessageFromMeshBlocks(
         mapper_->mesh_layer(), mapper_->mesh_layer().getAllBlockIndices(),
-        &mesh_msg);
+        &mesh_msg, display_semantic_);
       mesh_msg.clear = true;
       should_publish = true;
       display_last_ = display_semantic_;
     } else {
       converter_.meshMessageFromMeshBlocks(
         mapper_->mesh_layer(),
-        mesh_updated_list, &mesh_msg, mesh_blocks_to_delete);
+        mesh_updated_list, &mesh_msg, display_semantic_, mesh_blocks_to_delete);
     }
     mesh_msg.header.frame_id = global_frame_;
     mesh_msg.header.stamp = timestamp;

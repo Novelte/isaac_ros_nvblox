@@ -239,7 +239,7 @@ private:
 
   // Caches for GPU images
   ColorImage color_image_;
-  ColorImage semantic_image_;  
+  SemanticImage semantic_image_;  
   DepthImage depth_image_;
   DepthImage pointcloud_image_;
 
