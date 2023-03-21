@@ -205,6 +205,8 @@ def generate_launch_description():
         parameters=[{
             'frame_id': 'camera_color_optical_frame',
             'conf_thres': 0.5,
+            'image_width': 640,
+            'image_height': 480
         }])
 
     seg_container = ComposableNodeContainer(
