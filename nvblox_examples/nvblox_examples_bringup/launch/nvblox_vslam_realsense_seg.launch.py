@@ -160,11 +160,11 @@ def generate_launch_description():
 
     onnx_file_arg = DeclareLaunchArgument(
         'onnx_file',
-        default_value=os.path.join(yolov7_bringup_dir, 'model', 'isaac-sim-seg.onnx'),
+        default_value=os.path.join(yolov7_bringup_dir, 'model', 'human-rgb.onnx'),
         description='Full path to the onnx file to use')
     engine_file_arg = DeclareLaunchArgument(
         'engine_file',
-        default_value=os.path.join(yolov7_bringup_dir, 'model', 'isaac-sim-seg.engine'),
+        default_value=os.path.join(yolov7_bringup_dir, 'model', 'human-rgb.engine'),
         description='Full path to the tensorrt engine file to use / build')
 
 
@@ -204,10 +204,9 @@ def generate_launch_description():
         plugin='isaac_ros::yolov7::YoloV7SegmentDecoderNode',
         parameters=[{
             'frame_id': 'camera_color_optical_frame',
-            'conf_thres': 0.5,
-            'image_width': 640,
-            'image_height': 480
-        }])
+            'conf_thres': 0.15,
+        }], 
+        remappings=[('camera_info', '/camera/color/camera_info')])
 
     seg_container = ComposableNodeContainer(
         name='decoder_container',
