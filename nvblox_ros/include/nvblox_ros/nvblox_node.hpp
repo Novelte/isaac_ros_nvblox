@@ -67,6 +67,8 @@ public:
     const sensor_msgs::msg::CameraInfo::ConstSharedPtr & semantic_info_msg);    
   void pointcloudCallback(
     const sensor_msgs::msg::PointCloud2::ConstSharedPtr pointcloud);
+  void radarPointcloudCallback(
+    const sensor_msgs::msg::PointCloud2::ConstSharedPtr pointcloud);
 
   void savePly(
     const std::shared_ptr<nvblox_msgs::srv::FilePath::Request> request,
@@ -87,6 +89,7 @@ public:
   void processColorQueue();
   void processSemanticQueue();  
   void processPointcloudQueue();
+  void processRadarPointcloudQueue();
   void processEsdf();
   virtual void processMesh();
 
@@ -101,6 +104,8 @@ public:
     sensor_msgs::msg::Image::ConstSharedPtr & semantic_img_ptr,
     sensor_msgs::msg::CameraInfo::ConstSharedPtr & camera_info_msg);    
   virtual bool processLidarPointcloud(
+    sensor_msgs::msg::PointCloud2::ConstSharedPtr & pointcloud_ptr);
+  virtual bool processRadarPointcloud(
     sensor_msgs::msg::PointCloud2::ConstSharedPtr & pointcloud_ptr);
 
   bool canTransform(const std_msgs::msg::Header & header);
@@ -148,6 +153,10 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr
     pointcloud_sub_;
 
+  // Radar Pointcloud sub.
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr
+    radar_pointcloud_sub_;
+
   // Optional transform subs.
   rclcpp::Subscription<geometry_msgs::msg::TransformStamped>::SharedPtr
     transform_sub_;
@@ -177,6 +186,7 @@ private:
   rclcpp::TimerBase::SharedPtr color_processing_timer_;
   rclcpp::TimerBase::SharedPtr semantic_processing_timer_;
   rclcpp::TimerBase::SharedPtr pointcloud_processing_timer_;
+  rclcpp::TimerBase::SharedPtr radar_pointcloud_processing_timer_;
   rclcpp::TimerBase::SharedPtr esdf_processing_timer_;
   rclcpp::TimerBase::SharedPtr mesh_processing_timer_;
 
@@ -191,6 +201,7 @@ private:
   // Depth / Lidar / color toggle parameters
   bool use_depth_ = true;
   bool use_lidar_ = true;
+  bool use_radar_ = true;
   bool use_color_ = true;
   bool use_semantic_ = true;
   bool display_semantic_ = false;
@@ -200,6 +211,12 @@ private:
   int lidar_width_ = 1800;
   int lidar_height_ = 16;
   float lidar_vertical_fov_rad_ = 30.0 * M_PI / 180.0;
+
+  // RADAR settings, defaults for ti mmWave IWR6843ISK
+  int radar_width_ = 640;
+  int radar_height_ = 640;
+  float radar_horizontal_fov_rad_ = 60.0 * M_PI / 180.0;
+  float radar_vertical_fov_rad_ = 60.0 * M_PI / 180.0;
 
   // Used for ESDF slicing. Everything between min and max height will be
   // compressed to a single 2D level, output at slice_height_.
@@ -242,6 +259,7 @@ private:
   SemanticImage semantic_image_;  
   DepthImage depth_image_;
   DepthImage pointcloud_image_;
+  DepthImage radar_pointcloud_image_;
 
   // Message statistics (useful for debugging)
   libstatistics_collector::topic_statistics_collector::
@@ -262,6 +280,7 @@ private:
   rclcpp::Time last_color_update_time_;
   rclcpp::Time last_semantic_update_time_;
   rclcpp::Time last_pointcloud_update_time_;
+  rclcpp::Time last_radar_pointcloud_update_time_;
   rclcpp::Time last_esdf_update_time_;
   rclcpp::Time last_mesh_update_time_;
   rclcpp::Time last_mesh_semantic_update_time_;  
@@ -280,12 +299,15 @@ private:
     sensor_msgs::msg::CameraInfo::ConstSharedPtr>>
   semantic_image_queue_;  
   std::deque<sensor_msgs::msg::PointCloud2::ConstSharedPtr> pointcloud_queue_;
+  std::deque<sensor_msgs::msg::PointCloud2::ConstSharedPtr> radar_pointcloud_queue_;
+
 
   // Image queue mutexes.
   std::mutex depth_queue_mutex_;
   std::mutex color_queue_mutex_;
   std::mutex semantic_queue_mutex_;
   std::mutex pointcloud_queue_mutex_;
+  std::mutex radar_pointcloud_queue_mutex_;
   std::mutex color_semantic_mutex;
 
   // Keeps track of the mesh blocks deleted such that we can publish them for deletion in the rviz

@@ -206,6 +206,7 @@ template void RosConverter::convertLayerInAABBToPCLCuda<EsdfVoxel>(
     const VoxelBlockLayer<EsdfVoxel>& layer, const AxisAlignedBoundingBox& aabb,
     sensor_msgs::msg::PointCloud2* pointcloud);
 
+// Mesh
 void RosConverter::meshBlockMessageFromMeshBlock(
     const MeshBlock& mesh_block, nvblox_msgs::msg::MeshBlock* mesh_block_msg,
     bool semantic) {
@@ -297,6 +298,7 @@ bool RosConverter::depthImageFromImageMessage(
   return true;
 }
 
+// Slice (2D Projection)
 __global__ void populateSliceFromLayerKernel(
     Index3DDeviceHashMapType<EsdfBlock> block_hash, AxisAlignedBoundingBox aabb,
     float block_size, float* image, int rows, int cols, float z_slice_height,
@@ -373,6 +375,7 @@ void RosConverter::populateSliceFromLayer(const EsdfLayer& layer,
   checkCudaErrors(cudaPeekAtLastError());
 }
 
+// Lidar
 __global__ void depthImageFromPointcloudKernel(
     const Vector3f* pointcloud,          // NOLINT
     const Lidar lidar,                   // NOLINT
@@ -452,6 +455,90 @@ void RosConverter::depthImageFromPointcloudGPU(
   depthImageFromPointcloudKernel<<<num_thread_blocks, num_threads_per_block>>>(
       lidar_pointcloud_device_.data(), lidar, num_bytes_between_points,
       lidar.numel(), depth_image_ptr->dataPtr());
+  checkCudaErrors(cudaStreamSynchronize(cuda_stream_));
+  checkCudaErrors(cudaPeekAtLastError());
+}
+
+// Radar
+__global__ void depthImageFromPointcloudKernel(
+    const Vector3f* pointcloud,          // NOLINT
+    const Radar radar,                   // NOLINT
+    const int num_bytes_between_points,  // NOLINT
+    const int num_points,                // NOLINT
+    float* depth_image) {
+  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (idx >= num_points) {
+    return;
+  }
+
+  // Read a point from global memory
+  const Vector3f point = pointcloud[idx];
+
+  if (isnan(point.x()) || isnan(point.y()) || isnan(point.z())) {
+    return;
+  }
+
+  // Project
+  Index2D u_C_int;
+  if (!radar.project(point, &u_C_int)) {
+    return;
+  }
+
+  // Write the depth to the image
+  // NOTE(alexmillane): It's possible multiple points project to the same pixel.
+  // Firstly, writes should be atomic, so we're fine in that respect. The last
+  // projection to write "wins" so we basically end up with a random value, of
+  // the values that project to this pixel.
+  image::access(u_C_int.y(), u_C_int.x(), radar.num_azimuth_divisions(),
+                depth_image) = radar.getDepth(point);
+}
+
+void RosConverter::depthImageFromPointcloudGPU(
+    const sensor_msgs::msg::PointCloud2::ConstSharedPtr& pointcloud,
+    const Radar& radar, DepthImage* depth_image_ptr) {
+  CHECK(depth_image_ptr->memory_type() == MemoryType::kDevice ||
+        depth_image_ptr->memory_type() == MemoryType::kUnified);
+
+  // Check output space, and reallocate if required
+  if ((depth_image_ptr->rows() != radar.num_elevation_divisions()) ||
+      (depth_image_ptr->cols() != radar.num_azimuth_divisions())) {
+    *depth_image_ptr =
+        DepthImage(radar.num_elevation_divisions(),
+                   radar.num_azimuth_divisions(), MemoryType::kDevice);
+  }
+
+  // Set the entire image to 0.
+  depth_image_ptr->setZero();
+
+  // Get a pointer to the pointcloud
+  sensor_msgs::PointCloud2ConstIterator<float> iter_xyz(*pointcloud, "x");
+  const float* pointcloud_data_ptr = &(*iter_xyz);
+  const int num_bytes_between_points = pointcloud->point_step;
+  const int num_points = pointcloud->width * pointcloud->height;
+
+  // Expand buffers where required
+  if (radar.numel() > radar_pointcloud_host_.size()) {
+    const int new_size = static_cast<int>(radar.numel());
+    radar_pointcloud_host_.reserve(new_size);
+    radar_pointcloud_device_.reserve(new_size);
+  }
+
+  // Copy the pointcloud into pinned host memory
+  radar_pointcloud_host_.clear();
+  for (; iter_xyz != iter_xyz.end(); ++iter_xyz) {
+    radar_pointcloud_host_.push_back(
+        Vector3f(iter_xyz[0], iter_xyz[1], iter_xyz[2]));
+  }
+  // Copy the pointcloud to the GPU
+  radar_pointcloud_device_ = radar_pointcloud_host_;
+
+  // Convert to an image on the GPU
+  constexpr int num_threads_per_block = 256;  // because why not
+  const int num_thread_blocks = radar.numel() / num_threads_per_block + 1;
+  depthImageFromPointcloudKernel<<<num_thread_blocks, num_threads_per_block>>>(
+      radar_pointcloud_device_.data(), radar, num_bytes_between_points,
+      radar.numel(), depth_image_ptr->dataPtr());
   checkCudaErrors(cudaStreamSynchronize(cuda_stream_));
   checkCudaErrors(cudaPeekAtLastError());
 }

@@ -147,9 +147,20 @@ public:
     const sensor_msgs::msg::PointCloud2::ConstSharedPtr & pointcloud,
     const Lidar & lidar);
   // Write the pointcloud to file
-  void writeLidarPointcloudToFile(
+  void writePointcloudToFile(
     const std::string filepath,
     const sensor_msgs::msg::PointCloud2::ConstSharedPtr & pointcloud);
+
+  // Convert radar pointcloud to depth image.
+  void depthImageFromPointcloudGPU(
+    const sensor_msgs::msg::PointCloud2::ConstSharedPtr & pointcloud,
+    const Radar & radar, DepthImage * depth_image_ptr);
+
+  // This function returns true if the pointcloud passed in is consistent with
+  // the Radar intrinsics model.
+  bool checkRadarPointcloud(
+    const sensor_msgs::msg::PointCloud2::ConstSharedPtr & pointcloud,
+    const Radar & radar);
 
 private:
   // Helper functions for CUDA conversions.
@@ -180,6 +191,11 @@ private:
   std::unordered_set<Lidar, Lidar::Hash> checked_lidar_models_;
   host_vector<Vector3f> lidar_pointcloud_host_;
   device_vector<Vector3f> lidar_pointcloud_device_;
+
+  // Radar Pointcloud conversion
+  std::unordered_set<Radar, Radar::Hash> checked_radar_models_;
+  host_vector<Vector3f> radar_pointcloud_host_;
+  device_vector<Vector3f> radar_pointcloud_device_;
 };
 
 }  // namespace nvblox

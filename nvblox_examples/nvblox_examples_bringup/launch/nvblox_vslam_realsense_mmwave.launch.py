@@ -25,6 +25,8 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.descriptions import ComposableNode
 from launch_ros.actions import ComposableNodeContainer
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.actions import IncludeLaunchDescription
 
 
 def generate_launch_description():
@@ -32,7 +34,7 @@ def generate_launch_description():
     # RealSense
     realsense_config_file_path = os.path.join(
         get_package_share_directory('nvblox_examples_bringup'),
-        'config', 'realsense_imu.yaml'
+        'config', 'realsense.yaml'
     )  
 
     realsense_node = ComposableNode(
@@ -74,78 +76,75 @@ def generate_launch_description():
         output='screen'
     )
 
-    # VINS
-    vins_config_file = os.path.join(
-        get_package_share_directory('nvblox_examples_bringup'),
-        'config', 'vins', 'realsense_stereo_imu_config.yaml'
-    )  
-
-    vins_pkg_path = os.path.join(
-        get_package_share_directory('loop_fusion'),
-        'support_files'
-    )  
-
-
-    vins_node = Node(
-        package='vins',
-        executable='vins_node',
-        name='vins_estimator',
-        output='screen',
-        parameters=[{'config_file': vins_config_file,}]
+    # VSLAM
+    visual_slam_node = ComposableNode(
+        name='visual_slam_node',
+        package='isaac_ros_visual_slam',
+        plugin='isaac_ros::visual_slam::VisualSlamNode',
+        parameters=[{
+                    'enable_rectified_pose': True,
+                    'denoise_input_images': False,
+                    'rectified_images': True,
+                    'enable_debug_mode': False,
+                    'debug_dump_path': '/tmp/vslam',
+                    'enable_slam_visualization': True,
+                    'enable_landmarks_view': True,
+                    'enable_observations_view': True,
+                    'map_frame': 'map',
+                    'odom_frame': 'odom',
+                    'base_frame': 'base_link',
+                    'enable_localization_n_mapping': True,
+                    'publish_odom_to_base_tf': True,
+                    'publish_map_to_odom_tf': True,
+                    'image_qos': 'SENSOR_DATA'
+        }],
+        remappings=[('stereo_camera/left/image', '/camera/realsense_splitter_node/output/infra_1'),
+                    ('stereo_camera/left/camera_info', '/camera/infra1/camera_info'),
+                    ('stereo_camera/right/image', '/camera/realsense_splitter_node/output/infra_2'),
+                    ('stereo_camera/right/camera_info', '/camera/infra2/camera_info')]
     )
 
-    loop_node = Node(
-                package='loop_fusion',
-                executable='loop_fusion_node',
-                name='loop_fusion',
-                output='screen',
-                parameters=[{'config_file': vins_config_file,
-                            'pkg_path': vins_pkg_path,
-                            }]
-            )
+    vslam_container = ComposableNodeContainer(
+        name='vslam_container',
+        namespace='',
+        package='rclcpp_components',
+        executable='component_container',
+        composable_node_descriptions=[
+            visual_slam_node
+        ],
+        output='screen'
+    )
 
-    tf_nodes = [Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name='static_transform_publisher',
-            output='screen',
-            arguments = ['0', '0', '0', '0.5', '-0.5', '0.5', '0.5', 'camera', 'camera_link'],
-        ),
-        Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name='static_transform_publisher',
-            output='screen',
-            arguments = ['0', '0.2', '0.35', '0.0', '0.0', '0.0', '1.0', 'map', 'world'],
-        ),             
-        Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name='static_transform_publisher',
-            output='screen',
-            arguments = ['0', '0', '0', '0.5', '-0.5', '0.5', '0.5', 'front_camera_rect', 'camera_link'],
-        ),
-        Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name='static_transform_publisher',
-            output='screen',
-            arguments = ['0', '0.2', '0.35', '0.0', '0.0', '0.0', '1.0', 'map', 'world'],
-        ),
-        Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name='static_transform_publisher',
-            output='screen',
-            arguments = ['0', '0', '0', '0.0', '0.0', '0.0', '1.0', 'odom', 'base_link'],
-        ),   
-        Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name='static_transform_publisher',
-            output='screen',
-            arguments = ['0', '0', '0', '0.0', '0.0', '0.0', '1.0', 'base_link', 'front_camera_rect'],
-        )]  
+    base_link_tf_node = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        arguments=[
+            '0', '0', '0', '0', '0', '0', '1',
+            'base_link', 'camera_link']
+    )
+
+    # mmWave
+    mmwave_config = DeclareLaunchArgument(
+        'mmwave_config', default_value=os.path.join(
+            get_package_share_directory(
+                'nvblox_examples_bringup'), 'config', 'Mobile_Tracker_6843_ISK.cfg'
+        )
+    )
+
+    ti_mmwave_bringup_launch_dir = os.path.join(get_package_share_directory("ti_mmwave_ros2_pkg"), "launch")
+
+    radar_node = IncludeLaunchDescription(
+            PythonLaunchDescriptionSource([ti_mmwave_bringup_launch_dir, "/single_6843.launch.py"]),
+            launch_arguments={"cfg_file": LaunchConfiguration('mmwave_config')}.items())
+
+
+    radar_base_link_tf_node = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        arguments=[
+            '0', '0', '0', '0', '0', '0', '1',
+            'base_link', 'ti_mmwave']
+    )
 
     # Nvblox
     nvblox_config = DeclareLaunchArgument(
@@ -164,8 +163,8 @@ def generate_launch_description():
             ("depth/camera_info", "/camera/depth/camera_info"),
             ("depth/image", "/camera/realsense_splitter_node/output/depth"),
             ("color/camera_info", "/camera/color/camera_info"),
-            ("color/image", "/camera/color/image_raw"), 
-            ("/pose", "/vins_estimator/odometry"),
+            ("color/image", "/camera/color/image_raw"),
+            ("radar", "/ti_mmwave/radar_scan_pcl")
         ]
     )
 
@@ -180,11 +179,9 @@ def generate_launch_description():
         output='screen'
     )
 
-
-
     # RVIZ
     rviz_config_path = os.path.join(get_package_share_directory(
-        'nvblox_examples_bringup'), 'config', 'nvblox_vslam_realsense.rviz')
+        'nvblox_examples_bringup'), 'config', 'nvblox_vslam_realsense_mmwave.rviz')
 
     rviz = Node(
         package='rviz2',
@@ -194,10 +191,12 @@ def generate_launch_description():
 
     return LaunchDescription([
         nvblox_config,
+        mmwave_config,
         realsense_container,
-        # vslam_container,
-        vins_node,
-        loop_node,
+        vslam_container,
         nvblox_container,
+        radar_node,
+        radar_base_link_tf_node,
+        base_link_tf_node,
         rviz
-    ] + tf_nodes)
+    ])
