@@ -40,6 +40,7 @@
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <std_srvs/srv/set_bool.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 
 #include "nvblox_ros/conversions.hpp"
@@ -61,6 +62,9 @@ public:
   void colorImageCallback(
     const sensor_msgs::msg::Image::ConstSharedPtr & color_img_ptr,
     const sensor_msgs::msg::CameraInfo::ConstSharedPtr & color_info_msg);
+  void semanticImageCallback(
+    const sensor_msgs::msg::Image::ConstSharedPtr & semantic_img_ptr,
+    const sensor_msgs::msg::CameraInfo::ConstSharedPtr & semantic_info_msg);    
   void pointcloudCallback(
     const sensor_msgs::msg::PointCloud2::ConstSharedPtr pointcloud);
   void radarPointcloudCallback(
@@ -75,11 +79,15 @@ public:
   void loadMap(
     const std::shared_ptr<nvblox_msgs::srv::FilePath::Request> request,
     std::shared_ptr<nvblox_msgs::srv::FilePath::Response> response);
+  void swapDisplay(
+    const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+    std::shared_ptr<std_srvs::srv::SetBool::Response> response);
 
   // Does whatever processing there is to be done, depending on what
   // transforms are available.
   void processDepthQueue();
   void processColorQueue();
+  void processSemanticQueue();  
   void processPointcloudQueue();
   void processRadarPointcloudQueue();
   void processEsdf();
@@ -92,6 +100,9 @@ public:
   virtual bool processColorImage(
     sensor_msgs::msg::Image::ConstSharedPtr & color_img_ptr,
     sensor_msgs::msg::CameraInfo::ConstSharedPtr & camera_info_msg);
+  virtual bool processSemanticImage(
+    sensor_msgs::msg::Image::ConstSharedPtr & semantic_img_ptr,
+    sensor_msgs::msg::CameraInfo::ConstSharedPtr & camera_info_msg);    
   virtual bool processLidarPointcloud(
     sensor_msgs::msg::PointCloud2::ConstSharedPtr & pointcloud_ptr);
   virtual bool processRadarPointcloud(
@@ -132,6 +143,12 @@ private:
   message_filters::Subscriber<sensor_msgs::msg::CameraInfo>
   color_camera_info_sub_;
 
+  // Semantic sub
+  std::shared_ptr<message_filters::Synchronizer<time_policy_t>> timesync_semantic_;
+  message_filters::Subscriber<sensor_msgs::msg::Image> semantic_sub_;
+  message_filters::Subscriber<sensor_msgs::msg::CameraInfo>
+  semantic_camera_info_sub_;
+
   // Pointcloud sub.
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr
     pointcloud_sub_;
@@ -159,6 +176,7 @@ private:
   rclcpp::Service<nvblox_msgs::srv::FilePath>::SharedPtr save_ply_service_;
   rclcpp::Service<nvblox_msgs::srv::FilePath>::SharedPtr save_map_service_;
   rclcpp::Service<nvblox_msgs::srv::FilePath>::SharedPtr load_map_service_;
+  rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr swap_display_service;
 
   // Callback groups.
   rclcpp::CallbackGroup::SharedPtr group_processing_;
@@ -166,6 +184,7 @@ private:
   // Timers.
   rclcpp::TimerBase::SharedPtr depth_processing_timer_;
   rclcpp::TimerBase::SharedPtr color_processing_timer_;
+  rclcpp::TimerBase::SharedPtr semantic_processing_timer_;
   rclcpp::TimerBase::SharedPtr pointcloud_processing_timer_;
   rclcpp::TimerBase::SharedPtr radar_pointcloud_processing_timer_;
   rclcpp::TimerBase::SharedPtr esdf_processing_timer_;
@@ -184,6 +203,9 @@ private:
   bool use_lidar_ = true;
   bool use_radar_ = true;
   bool use_color_ = true;
+  bool use_semantic_ = true;
+  bool display_semantic_ = false;
+  bool display_last_ = display_semantic_;
 
   // LIDAR settings, defaults for Velodyne VLP16
   int lidar_width_ = 1800;
@@ -211,6 +233,7 @@ private:
   std::string pose_frame_ = "base_link";
   float max_tsdf_update_hz_ = 10.0f;
   float max_color_update_hz_ = 5.0f;
+  float max_semantic_update_hz_ = 5.0f;  
   float max_pointcloud_update_hz_ = 10.0f;
   float max_mesh_update_hz_ = 5.0f;
   float max_esdf_update_hz_ = 2.0f;
@@ -233,6 +256,7 @@ private:
 
   // Caches for GPU images
   ColorImage color_image_;
+  SemanticImage semantic_image_;  
   DepthImage depth_image_;
   DepthImage pointcloud_image_;
   DepthImage radar_pointcloud_image_;
@@ -244,6 +268,9 @@ private:
   libstatistics_collector::topic_statistics_collector::
   ReceivedMessagePeriodCollector<sensor_msgs::msg::Image>
   rgb_frame_statistics_;
+  libstatistics_collector::topic_statistics_collector::
+  ReceivedMessagePeriodCollector<sensor_msgs::msg::Image>
+  semantic_frame_statistics_;  
 
   // Output directory
   std::string output_dir_ = "";
@@ -251,10 +278,12 @@ private:
   // State for integrators running at various speeds.
   rclcpp::Time last_tsdf_update_time_;
   rclcpp::Time last_color_update_time_;
+  rclcpp::Time last_semantic_update_time_;
   rclcpp::Time last_pointcloud_update_time_;
   rclcpp::Time last_radar_pointcloud_update_time_;
   rclcpp::Time last_esdf_update_time_;
   rclcpp::Time last_mesh_update_time_;
+  rclcpp::Time last_mesh_semantic_update_time_;  
 
   // Cache the last known number of subscribers.
   size_t mesh_subscriber_count_ = 0;
@@ -266,6 +295,9 @@ private:
   std::deque<std::pair<sensor_msgs::msg::Image::ConstSharedPtr,
     sensor_msgs::msg::CameraInfo::ConstSharedPtr>>
   color_image_queue_;
+  std::deque<std::pair<sensor_msgs::msg::Image::ConstSharedPtr,
+    sensor_msgs::msg::CameraInfo::ConstSharedPtr>>
+  semantic_image_queue_;  
   std::deque<sensor_msgs::msg::PointCloud2::ConstSharedPtr> pointcloud_queue_;
   std::deque<sensor_msgs::msg::PointCloud2::ConstSharedPtr> radar_pointcloud_queue_;
 
@@ -273,8 +305,10 @@ private:
   // Image queue mutexes.
   std::mutex depth_queue_mutex_;
   std::mutex color_queue_mutex_;
+  std::mutex semantic_queue_mutex_;
   std::mutex pointcloud_queue_mutex_;
   std::mutex radar_pointcloud_queue_mutex_;
+  std::mutex color_semantic_mutex;
 
   // Keeps track of the mesh blocks deleted such that we can publish them for deletion in the rviz
   // plugin

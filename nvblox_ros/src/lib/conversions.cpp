@@ -59,6 +59,25 @@ bool RosConverter::colorImageFromImageMessage(
   return true;
 }
 
+// Convert image to depth frame object
+bool RosConverter::semanticImageFromImageMessage(
+  const sensor_msgs::msg::Image::ConstSharedPtr & image_msg,
+  SemanticImage * semantic_image)
+{
+  CHECK_NOTNULL(semantic_image);
+
+  // First check if we actually have a valid image here.
+  if (image_msg->encoding != "mono8") {
+    return false;
+  }
+
+  semantic_image->populateFromBuffer(
+    image_msg->height, image_msg->width,
+    reinterpret_cast<const Semantic *>(&image_msg->data[0]), MemoryType::kDevice);
+
+  return true;
+}
+
 void RosConverter::imageMessageFromDepthImage(
   const DepthImage & depth_image, const std::string & frame_id,
   sensor_msgs::msg::Image * image_msg)
@@ -81,17 +100,20 @@ void RosConverter::imageMessageFromDepthImage(
 }
 
 void RosConverter::meshMessageFromMeshLayer(
-  const BlockLayer<MeshBlock> & mesh_layer, nvblox_msgs::msg::Mesh * mesh_msg)
+  const BlockLayer<MeshBlock> & mesh_layer, nvblox_msgs::msg::Mesh * mesh_msg,
+  bool semantic)
 {
   std::vector<Index3D> block_indices = mesh_layer.getAllBlockIndices();
-  meshMessageFromMeshBlocks(mesh_layer, block_indices, mesh_msg);
+  meshMessageFromMeshBlocks(mesh_layer, block_indices, mesh_msg, semantic);
 }
 
 void RosConverter::meshMessageFromMeshBlocks(
   const BlockLayer<MeshBlock> & mesh_layer,
   const std::vector<Index3D> & block_indices,
   nvblox_msgs::msg::Mesh * mesh_msg,
-  const std::vector<Index3D> & block_indices_to_delete)
+  bool semantic,
+  const std::vector<Index3D> & block_indices_to_delete
+  )
 {
   // Go through all the blocks, converting each individual one.
   mesh_msg->block_size = mesh_layer.block_size();
@@ -109,7 +131,7 @@ void RosConverter::meshMessageFromMeshBlocks(
     }
 
     // Convert the actual block.
-    meshBlockMessageFromMeshBlock(*mesh_block, &mesh_msg->blocks[i]);
+    meshBlockMessageFromMeshBlock(*mesh_block, &mesh_msg->blocks[i], semantic);
   }
 
   for (const Index3D & block_index : block_indices_to_delete) {

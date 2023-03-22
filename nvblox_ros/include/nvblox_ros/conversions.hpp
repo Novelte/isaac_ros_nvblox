@@ -78,6 +78,10 @@ public:
     const sensor_msgs::msg::Image::ConstSharedPtr & image_msg,
     ColorImage * color_image);
 
+  bool semanticImageFromImageMessage(
+    const sensor_msgs::msg::Image::ConstSharedPtr & image_msg,
+    SemanticImage * semantic_image);
+
   // Convert depth frame to image message.
   void imageMessageFromDepthImage(
     const DepthImage & depth_frame,
@@ -87,16 +91,20 @@ public:
   // Convert a mesh to a message.
   void meshMessageFromMeshLayer(
     const BlockLayer<MeshBlock> & mesh_layer,
-    nvblox_msgs::msg::Mesh * mesh_msg);
+    nvblox_msgs::msg::Mesh * mesh_msg,
+    bool semantic);
 
   void meshMessageFromMeshBlocks(
     const BlockLayer<MeshBlock> & mesh_layer,
     const std::vector<Index3D> & block_indices,
     nvblox_msgs::msg::Mesh * mesh_msg,
-    const std::vector<Index3D> & deleted_indices = std::vector<Index3D>());
+    bool semantic,
+    const std::vector<Index3D> & deleted_indices = std::vector<Index3D>()
+    );
 
   void meshBlockMessageFromMeshBlock(
-    const MeshBlock & mesh_block, nvblox_msgs::msg::MeshBlock * mesh_block_msg);
+    const MeshBlock & mesh_block, nvblox_msgs::msg::MeshBlock * mesh_block_msg,
+    bool semantic);
 
   // Convert a mesh to a marker array.
   void markerMessageFromMeshLayer(
