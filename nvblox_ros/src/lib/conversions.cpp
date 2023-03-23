@@ -71,6 +71,14 @@ bool RosConverter::semanticImageFromImageMessage(
     return false;
   }
 
+  // for (size_t i=0; i<image_msg->height * image_msg->width; i++)
+  // {
+  //   if (image_msg->data[i] != 0 && image_msg->data[i]!=255)
+  //   {
+  //     printf("image_msg data: %d\n", image_msg->data[i]);
+  //   }
+  // }
+
   semantic_image->populateFromBuffer(
     image_msg->height, image_msg->width,
     reinterpret_cast<const Semantic *>(&image_msg->data[0]), MemoryType::kDevice);
@@ -204,6 +212,80 @@ void RosConverter::distanceMapSliceFromLayer(
   // Fill in the float image.
   populateSliceFromLayer(
     layer, aabb, z_slice_level, voxel_size, kUnknownValue,
+    &image);
+
+  checkCudaErrors(
+    cudaMemcpy(
+      map_slice->data.data(), image.dataPtr(),
+      image.numel() * sizeof(float), cudaMemcpyDefault));
+}
+
+// extract map slice for specific class
+void RosConverter::semanticDistanceMapSliceFromLayer(
+    const EsdfLayer & layer, const SemanticLayer & semantic_layer, 
+    float z_slice_level, nvblox_msgs::msg::DistanceMapSlice * map_slice)
+{
+  CHECK_NOTNULL(map_slice);
+  CHECK_EQ(layer.block_size(), semantic_layer.block_size());
+  // Unlikely we're going to have anything be 1000 meters inside an obstacle.
+  float kUnknownValue = -1000.0f;
+
+
+  // Figure out how big the map needs to be.
+  // To do this, we get all the block indices, figure out which intersect
+  // with our desired height, and select the min and max in the X and Y
+  // direction.
+  const float block_size = layer.block_size();
+  constexpr int kVoxelsPerSide = VoxelBlock<EsdfVoxel>::kVoxelsPerSide;
+  const float voxel_size = block_size / kVoxelsPerSide;
+  std::vector<Index3D> block_indices = layer.getAllBlockIndices();
+  AxisAlignedBoundingBox aabb;
+  aabb.setEmpty();
+
+  // Figure out the index of the desired height.
+  Index3D desired_z_block_index;
+  Index3D desired_z_voxel_index;
+  getBlockAndVoxelIndexFromPositionInLayer(
+    block_size, Vector3f(0.0f, 0.0f, z_slice_level), &desired_z_block_index,
+    &desired_z_voxel_index);
+
+  for (const Index3D & block_index : block_indices) {
+    // Skip all other heights of block.
+    if (block_index.z() != desired_z_block_index.z()) {
+      continue;
+    }
+
+    // Extend the AABB by the dimensions of this block.
+    aabb.extend(getAABBOfBlock(block_size, block_index));
+  }
+
+  Vector3f bounding_size = aabb.sizes();
+  // Width = cols, height = rows
+  int width = static_cast<int>(std::ceil(bounding_size.x() / voxel_size));
+  int height = static_cast<int>(std::ceil(bounding_size.y() / voxel_size));
+
+  int map_size = width * height;
+
+  // Set all the other settings in the message.
+  map_slice->origin.x = aabb.min().x();
+  map_slice->origin.y = aabb.min().y();
+  map_slice->origin.z = z_slice_level;
+
+  map_slice->resolution = voxel_size;
+  map_slice->width = width;
+  map_slice->height = height;
+  map_slice->unknown_value = kUnknownValue;
+
+  // Allocate the map directly, we will write directly to this output to prevent
+  // copies.
+  map_slice->data.resize(map_size, kUnknownValue);
+
+  // Create an image of the correct size.
+  Image<float> image(height, width, MemoryType::kDevice);
+
+  // Fill in the float image.
+  populateSliceFromLayer(
+    layer, semantic_layer, aabb, z_slice_level, voxel_size, kUnknownValue,
     &image);
 
   checkCudaErrors(

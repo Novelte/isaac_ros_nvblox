@@ -253,6 +253,8 @@ NvbloxNode::NvbloxNode(const rclcpp::NodeOptions & options)
     create_publisher<sensor_msgs::msg::PointCloud2>("~/pointcloud", 1);
   map_slice_publisher_ =
     create_publisher<nvblox_msgs::msg::DistanceMapSlice>("~/map_slice", 1);
+  semantic_map_slice_publisher_ =
+    create_publisher<nvblox_msgs::msg::DistanceMapSlice>("~/semantic_map_slice", 1);
   mesh_marker_publisher_ =
     create_publisher<visualization_msgs::msg::MarkerArray>(
     "~/mesh_marker",
@@ -1180,6 +1182,21 @@ void NvbloxNode::updateEsdf(const rclcpp::Time & timestamp)
     map_slice.header.stamp = timestamp;
     map_slice_publisher_->publish(map_slice);
   }
+
+  // Also publish the semantic map slice.
+  if (distance_slice_ && semantic_map_slice_publisher_->get_subscription_count() > 0) {
+    timing::Timer output_map_slice_timer("ros/esdf/output/semantic_map_slice");
+
+    nvblox_msgs::msg::DistanceMapSlice map_slice;
+
+    converter_.semanticDistanceMapSliceFromLayer(
+      mapper_->esdf_layer(), mapper_->semantic_layer(),
+      slice_height_, &map_slice);
+    map_slice.header.frame_id = global_frame_;
+    map_slice.header.stamp = timestamp;
+    semantic_map_slice_publisher_->publish(map_slice);
+  }
+
 }
 
 void NvbloxNode::updateMesh(const rclcpp::Time & timestamp)

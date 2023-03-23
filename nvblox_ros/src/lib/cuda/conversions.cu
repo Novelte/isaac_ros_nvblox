@@ -375,6 +375,105 @@ void RosConverter::populateSliceFromLayer(const EsdfLayer& layer,
   checkCudaErrors(cudaPeekAtLastError());
 }
 
+__global__ void populateSliceFromLayerKernel(
+    Index3DDeviceHashMapType<EsdfBlock> block_hash, 
+    Index3DDeviceHashMapType<SemanticBlock> semantic_block_hash,
+    AxisAlignedBoundingBox aabb,
+    float block_size, float* image, int rows, int cols, float z_slice_height,
+    float resolution, float unobserved_value) {
+  const float voxel_size = block_size / EsdfBlock::kVoxelsPerSide;
+  const int pixel_col = blockIdx.x * blockDim.x + threadIdx.x;
+  const int pixel_row = blockIdx.y * blockDim.y + threadIdx.y;
+
+  if (pixel_col >= cols || pixel_row >= rows) {
+    return;
+  }
+
+  // Figure out where this pixel should map to.
+  Vector3f voxel_position(aabb.min().x() + resolution * pixel_col,
+                          aabb.min().y() + resolution * pixel_row,
+                          z_slice_height);
+
+  Index3D block_index, voxel_index;
+
+  getBlockAndVoxelIndexFromPositionInLayer(block_size, voxel_position,
+                                           &block_index, &voxel_index);
+
+  // Get the relevant ESDF block.
+  EsdfBlock* block_ptr = nullptr;
+  SemanticBlock* semantic_block_ptr = nullptr;
+
+  auto it = block_hash.find(block_index);
+  auto it2 = semantic_block_hash.find(block_index);
+
+  if (it != block_hash.end() && it2 != semantic_block_hash.end()) {
+    block_ptr = it->second;
+    semantic_block_ptr = it2->second;
+  } else {
+    image::access(pixel_row, pixel_col, cols, image) = unobserved_value;
+    return;
+  }
+
+  // Get the relevant pixel.
+  const EsdfVoxel* voxel =
+      &block_ptr->voxels[voxel_index.x()][voxel_index.y()][voxel_index.z()];
+  const SemanticVoxel* semantic_voxel = 
+      &semantic_block_ptr->voxels[voxel_index.x()][voxel_index.y()][voxel_index.z()];
+
+  float distance = unobserved_value;
+
+  // if (semantic_voxel->id.id != 0 && semantic_voxel->id.id !=255)
+  // {
+  //   printf("semantic voxel id: %d\n", semantic_voxel->id.id);
+  // }
+
+  
+  if (voxel->observed) {
+    if (semantic_voxel->id.id == 0)
+    {
+      // printf("semantic_voxel->id.id: %d\n", semantic_voxel->id.id);
+      distance = voxel_size * std::sqrt(voxel->squared_distance_vox);
+      if (voxel->is_inside) {
+        distance = -distance;
+      }
+    }
+  }
+  image::access(pixel_row, pixel_col, cols, image) = distance;
+}
+
+void RosConverter::populateSliceFromLayer(const EsdfLayer& layer,
+                                          const SemanticLayer& semantic_layer,
+                                          const AxisAlignedBoundingBox& aabb,
+                                          float z_slice_height,
+                                          float resolution,
+                                          float unobserved_value,
+                                          Image<float>* image) {
+  if (image->numel() <= 0) {
+    return;
+  }
+  const float voxel_size = layer.voxel_size();
+
+  // Create a GPU hash of the ESDF.
+  GPULayerView<EsdfBlock> gpu_layer_view = layer.getGpuLayerView();
+  // Create a GPU hash of the Semantic.
+  GPULayerView<SemanticBlock> gpu_semantic_layer_view = semantic_layer.getGpuLayerView();
+
+  // Pass in the GPU hash and AABB and let the kernel figure it out.
+  constexpr int kThreadDim = 16;
+  const int rounded_rows = static_cast<int>(
+      std::ceil(image->rows() / static_cast<float>(kThreadDim)));
+  const int rounded_cols = static_cast<int>(
+      std::ceil(image->cols() / static_cast<float>(kThreadDim)));
+  dim3 block_dim(rounded_cols, rounded_rows);
+  dim3 thread_dim(kThreadDim, kThreadDim);
+  populateSliceFromLayerKernel<<<block_dim, thread_dim, 0, cuda_stream_>>>(
+      gpu_layer_view.getHash().impl_, gpu_semantic_layer_view.getHash().impl_, aabb, layer.block_size(),
+      image->dataPtr(), image->rows(), image->cols(), z_slice_height,
+      resolution, unobserved_value);
+  checkCudaErrors(cudaStreamSynchronize(cuda_stream_));
+  checkCudaErrors(cudaPeekAtLastError());
+}
+
 // Lidar
 __global__ void depthImageFromPointcloudKernel(
     const Vector3f* pointcloud,          // NOLINT

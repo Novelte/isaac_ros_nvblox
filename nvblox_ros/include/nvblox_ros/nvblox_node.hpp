@@ -168,6 +168,8 @@ private:
     pointcloud_publisher_;
   rclcpp::Publisher<nvblox_msgs::msg::DistanceMapSlice>::SharedPtr
     map_slice_publisher_;
+  rclcpp::Publisher<nvblox_msgs::msg::DistanceMapSlice>::SharedPtr
+    semantic_map_slice_publisher_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr slice_bounds_publisher_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
     mesh_marker_publisher_;
