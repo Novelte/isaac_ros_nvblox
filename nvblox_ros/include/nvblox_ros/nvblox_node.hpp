@@ -228,6 +228,7 @@ private:
   // Slice visualization params
   std::string slice_visualization_attachment_frame_id_ = "base_link";
   float slice_visualization_side_length_ = 10.0f;
+  std::vector<int64_t> semantic_slice_ids_ = {0,};
 
   // ROS settings & update throttles
   std::string global_frame_ = "map";

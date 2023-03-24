@@ -138,7 +138,8 @@ public:
 
   void semanticDistanceMapSliceFromLayer(
     const EsdfLayer & layer, const SemanticLayer & semantic_layer, 
-    float height, nvblox_msgs::msg::DistanceMapSlice * map_slice);
+    float height, nvblox_msgs::msg::DistanceMapSlice * map_slice,
+    const std::vector<int64_t> &semantic_ids);
 
   // Convert pointcloud to depth image.
   void depthImageFromPointcloudGPU(
@@ -191,7 +192,8 @@ private:
     const SemanticLayer & semantic_layer,
     const AxisAlignedBoundingBox & aabb,
     float z_slice_height, float resolution,
-    float unobserved_value, Image<float> * image);
+    float unobserved_value, Image<float> * image, 
+    const std::vector<int64_t> & semantic_slice_ids);
 
   // State.
   cudaStream_t cuda_stream_ = nullptr;

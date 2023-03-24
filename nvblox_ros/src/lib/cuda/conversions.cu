@@ -380,7 +380,8 @@ __global__ void populateSliceFromLayerKernel(
     Index3DDeviceHashMapType<SemanticBlock> semantic_block_hash,
     AxisAlignedBoundingBox aabb,
     float block_size, float* image, int rows, int cols, float z_slice_height,
-    float resolution, float unobserved_value) {
+    float resolution, float unobserved_value, uint8_t* semantic_slice_ids, 
+    const int num_slice_ids) {
   const float voxel_size = block_size / EsdfBlock::kVoxelsPerSide;
   const int pixel_col = blockIdx.x * blockDim.x + threadIdx.x;
   const int pixel_row = blockIdx.y * blockDim.y + threadIdx.y;
@@ -421,16 +422,18 @@ __global__ void populateSliceFromLayerKernel(
       &semantic_block_ptr->voxels[voxel_index.x()][voxel_index.y()][voxel_index.z()];
 
   float distance = unobserved_value;
-
-
   
-  if (voxel->observed) {
-    if (semantic_voxel->id.id == 0)
-    {
-      distance = voxel_size * std::sqrt(voxel->squared_distance_vox);
-      if (voxel->is_inside) {
-        distance = -distance;
-      }
+  bool is_target = false;
+  for (int i=0; i<num_slice_ids;i++)
+  {
+    if (semantic_voxel->id.id == semantic_slice_ids[i])
+      is_target = true;
+  }
+
+  if (voxel->observed && is_target) {
+    distance = voxel_size * std::sqrt(voxel->squared_distance_vox);
+    if (voxel->is_inside) {
+      distance = -distance;
     }
   }
   image::access(pixel_row, pixel_col, cols, image) = distance;
@@ -442,7 +445,8 @@ void RosConverter::populateSliceFromLayer(const EsdfLayer& layer,
                                           float z_slice_height,
                                           float resolution,
                                           float unobserved_value,
-                                          Image<float>* image) {
+                                          Image<float>* image, 
+                                          const std::vector<int64_t> & semantic_slice_ids) {
   if (image->numel() <= 0) {
     return;
   }
@@ -452,6 +456,14 @@ void RosConverter::populateSliceFromLayer(const EsdfLayer& layer,
   GPULayerView<EsdfBlock> gpu_layer_view = layer.getGpuLayerView();
   // Create a GPU hash of the Semantic.
   GPULayerView<SemanticBlock> gpu_semantic_layer_view = semantic_layer.getGpuLayerView();
+
+  // sam: it's a bit weird, but can't think of other way yet
+  std::vector<uint8_t> ids;
+  for (int64_t id: semantic_slice_ids)
+  {
+    ids.push_back((uint8_t)id);
+  }
+  device_vector<uint8_t> semantic_slice_ids_device(ids);
 
   // Pass in the GPU hash and AABB and let the kernel figure it out.
   constexpr int kThreadDim = 16;
@@ -464,7 +476,7 @@ void RosConverter::populateSliceFromLayer(const EsdfLayer& layer,
   populateSliceFromLayerKernel<<<block_dim, thread_dim, 0, cuda_stream_>>>(
       gpu_layer_view.getHash().impl_, gpu_semantic_layer_view.getHash().impl_, aabb, layer.block_size(),
       image->dataPtr(), image->rows(), image->cols(), z_slice_height,
-      resolution, unobserved_value);
+      resolution, unobserved_value, semantic_slice_ids_device.data(), semantic_slice_ids_device.size());
   checkCudaErrors(cudaStreamSynchronize(cuda_stream_));
   checkCudaErrors(cudaPeekAtLastError());
 }

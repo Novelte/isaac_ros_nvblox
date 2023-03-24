@@ -75,12 +75,17 @@ NvbloxNode::NvbloxNode(const rclcpp::NodeOptions & options)
     "radar_vertical_fov_rad",
     radar_vertical_fov_rad_);
 
+  // Slice Parameters
   slice_visualization_attachment_frame_id_ =
     declare_parameter<std::string>(
     "slice_visualization_attachment_frame_id",
     slice_visualization_attachment_frame_id_);
   slice_visualization_side_length_ = declare_parameter<float>(
     "slice_visualization_side_length", slice_visualization_side_length_);
+  semantic_slice_ids_ = declare_parameter<std::vector<int64_t>>(
+    "semantic_slice_ids", semantic_slice_ids_);
+
+
   // Update rates
   max_tsdf_update_hz_ =
     declare_parameter<float>("max_tsdf_update_hz", max_tsdf_update_hz_);
@@ -1191,7 +1196,7 @@ void NvbloxNode::updateEsdf(const rclcpp::Time & timestamp)
 
     converter_.semanticDistanceMapSliceFromLayer(
       mapper_->esdf_layer(), mapper_->semantic_layer(),
-      slice_height_, &map_slice);
+      slice_height_, &map_slice, semantic_slice_ids_);
     map_slice.header.frame_id = global_frame_;
     map_slice.header.stamp = timestamp;
     semantic_map_slice_publisher_->publish(map_slice);

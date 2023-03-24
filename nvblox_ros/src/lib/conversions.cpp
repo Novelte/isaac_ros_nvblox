@@ -223,7 +223,8 @@ void RosConverter::distanceMapSliceFromLayer(
 // extract map slice for specific class
 void RosConverter::semanticDistanceMapSliceFromLayer(
     const EsdfLayer & layer, const SemanticLayer & semantic_layer, 
-    float z_slice_level, nvblox_msgs::msg::DistanceMapSlice * map_slice)
+    float z_slice_level, nvblox_msgs::msg::DistanceMapSlice * map_slice, 
+    const std::vector<int64_t> & semantic_slice_ids)
 {
   CHECK_NOTNULL(map_slice);
   CHECK_EQ(layer.block_size(), semantic_layer.block_size());
@@ -286,7 +287,7 @@ void RosConverter::semanticDistanceMapSliceFromLayer(
   // Fill in the float image.
   populateSliceFromLayer(
     layer, semantic_layer, aabb, z_slice_level, voxel_size, kUnknownValue,
-    &image);
+    &image, semantic_slice_ids);
 
   checkCudaErrors(
     cudaMemcpy(
