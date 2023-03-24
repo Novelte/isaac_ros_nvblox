@@ -422,16 +422,11 @@ __global__ void populateSliceFromLayerKernel(
 
   float distance = unobserved_value;
 
-  // if (semantic_voxel->id.id != 0 && semantic_voxel->id.id !=255)
-  // {
-  //   printf("semantic voxel id: %d\n", semantic_voxel->id.id);
-  // }
 
   
   if (voxel->observed) {
     if (semantic_voxel->id.id == 0)
     {
-      // printf("semantic_voxel->id.id: %d\n", semantic_voxel->id.id);
       distance = voxel_size * std::sqrt(voxel->squared_distance_vox);
       if (voxel->is_inside) {
         distance = -distance;
